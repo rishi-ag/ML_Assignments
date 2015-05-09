@@ -1,0 +1,157 @@
+---
+title: "Digit Classification"
+author: "Rishabh"
+date: "6 February 2015"
+output:
+  html_document:
+    toc: yes
+---
+
+```{r, Global Options and Load Libraries, echo=FALSE, include=FALSE}
+# some useful global defaults
+if(!require("knitr")) install.packages("knitr")
+opts_chunk$set(fig.width=8, fig.height=5, warning=FALSE, message=FALSE, include=TRUE, echo=TRUE, cache=TRUE, cache.comments=FALSE)
+
+if(!require("mvtnorm")) install.packages("mvtnorm")
+if(!require("ggplot2")) install.packages("ggplot2")
+if(!require("dplyr")) install.packages("dplyr")
+if(!require("doParallel")) install.packages("doParallel")
+
+#setwd("c:/Users/Rishabh/Documents/BGSE Material/Sem2/14D005 Machine Learning/Seminar2/HW/")
+```
+
+#Digit Classification
+
+##Sourced Files
+```{r, Source Helper Files and import datasets}
+source("KNN_Classification.R")
+
+#Training Data
+train.data <- read.csv("training.csv", header = F)
+trueClasses <- train.data[1:10,1]
+train.data <- train.data[1:10,-1]
+
+#Test Data
+test.data <- read.csv("test.csv", header = F)
+
+```
+
+
+##Train Classifier
+###Calculate Distance matrix
+```{r, Calculate Distance matrix}
+#detect cores for parallel computing
+cores <- detectCores()
+
+#Calculate Distance Matrix
+cl <- makeCluster(cores)
+registerDoParallel(cl)
+clusterExport(cl, c("train.data", "calc_dist"))
+
+dist_matrix <- parApply(cl, train.data, 1, function(row) (calc_dist(row, train.data)))
+
+stopCluster(cl)
+
+```
+
+###Calculate nearest neighbours matrix
+```{r, Calculate nearest neibours matrix}
+
+#Calculate the neighbours
+cl <- makeCluster(cores)
+registerDoParallel(cl)
+clusterExport(cl, c("dist_matrix"))
+system.time(orderMat <- as.matrix(t(parApply(cl, dist_matrix, 1, order))))
+stopCluster(cl)
+
+```
+
+###Classify for k = 1 and calculate empirical error and accuracy
+```{r, Classify for k = 1}
+k <- 1
+k.orderMat <- as.matrix(orderMat[,2:(k+1)])
+
+#Classify
+cl <- makeCluster(cores)
+registerDoParallel(cl)
+clusterExport(cl, c("k.orderMat", "trueClasses"))
+system.time(predictedClass <- as.character(parApply(cl, k.orderMat, 1, 
+                                     function(x) names(which.max(table(trueClasses[x]))))))
+stopCluster(cl)
+#accuracy
+
+accuracy <- mean(predictedClass == trueClasses)
+error_rate <- 1 - accuracy
+
+(round(c(accuracy = accuracy, "empirical error" = error_rate) * 100, 3))
+```
+
+###Selecting the best k
+Calculate error rates for different k and select the one with the minimun error.
+Although this is likely to be overfitted as there is no k fold validation done,
+but due to lack of computing power and sub optimal functions, I proceed with it.
+```{r, Selecting the best k}
+#selecting the best k
+k_seq <- seq.int(from = 1, to = 51, by = 2)
+k_seq <- c(k_seq, 71, 91, 111, 131, 151, 171)
+
+cl <- makeCluster(cores)
+registerDoParallel(cl)
+
+error_rate <- rep(NA, length(k_seq))
+
+for(i in 1:length(k_seq)) {
+  k.orderMat <- as.matrix(orderMat[,2:(i+1)])
+  clusterExport(cl, c("k.orderMat", "trueClasses"))
+  predictedClass <- as.character(parApply(cl, k.orderMat, 1, 
+                                          function(x) names(which.max(table(trueClasses[x])))))
+  error_rate[i] <- 1 - mean(predictedClass == trueClasses)
+}
+stopCluster(cl)
+error_rate <- data.frame(k = k_seq, error = error_rate)
+
+#plot the error rates
+ggplot(data = error_rate, aes(x = k, y = error)) +
+  geom_point() +
+  geom_line() +
+  xlab("k -Number of nearest neighbors") +
+  ylab("Misclassification error") +
+  theme_bw(base_size = 14) +
+  scale_colour_brewer(palette="Set1")
+
+k <- error_rate[which.min(error_rate[,2]),1]
+(c("Best k" = k))
+```
+
+
+##Test data on the selected k
+```{r, Test data}
+#Calculate Distance
+ 
+#Calculate the neighbours
+cl <- makeCluster(cores)
+registerDoParallel(cl)
+clusterExport(cl, c("dist_matrix"))
+system.time(orderMat <- as.matrix(t(parApply(cl, dist_matrix, 1, order))[,1:k]))
+stopCluster(cl)
+
+#Classify
+cl <- makeCluster(cores)
+registerDoParallel(cl)
+clusterExport(cl, c("orderMat", "trueClasses"))
+system.time(predictedClass <- as.character(
+  parApply(cl, orderMat, 1, function(x) names(which.max(table(trueClasses[x]))))))
+stopCluster(cl)
+
+#Predicted Class Table
+table(predictedClass)
+
+```
+
+##Write predictions to csv
+```{r, write predictions to csv, eval = T}
+#write to csv
+write.csv(x = predictedClass, file = "predictedDigitsNew.csv")
+
+```
+

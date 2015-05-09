@@ -1,0 +1,163 @@
+---
+title: "kNN_Classifier_Seminar"
+author: "Rishabh"
+date: "6 February 2015"
+output:
+  html_document:
+    toc: yes
+---
+
+```{r, Global Options and Load Libraries, echo=FALSE, include=FALSE}
+# some useful global defaults
+if(!require("knitr")) install.packages("knitr")
+opts_chunk$set(fig.width=8, fig.height=5, warning=FALSE, message=FALSE, include=TRUE, echo=TRUE, cache=TRUE, cache.comments=FALSE)
+
+if(!require("mvtnorm")) install.packages("mvtnorm")
+if(!require("ggplot2")) install.packages("ggplot2")
+if(!require("dplyr")) install.packages("dplyr")
+if(!require("reshape2")) install.packages("reshape2")
+
+#setwd("c:/Users/Rishabh/Documents/BGSE Material/Sem2/14D005 Machine Learning/Seminar2/HW/")
+```
+
+
+#KNN Classifier with 3 classes demonstration
+
+## Sourced Files
+We will source two R files for the demonstration.
+1. KNN_Classification.R - Contains all functions for classification and plotting.
+2. Dataset.R - contains functions to simulate data from previous assignment
+```{r, Source Helper Files}
+source("dataset.R")
+source("KNN_Classification.R")
+
+```
+
+
+## Generate and display test and train datasets
+```{r, Create Dataset}
+
+#data to train classifier
+noAnimals <- c(1000, 1000, 1000)
+rho  <- c(-0.3, 0.4, 0.5)
+sdXY <- list(c(4, 8), c(10, 8), c(10, 7))
+muXY <- list(c(6, 30), c(12, 50), c(7,5))
+
+animalsMem <- animals(rho, sdXY, muXY, noAnimals)
+
+# illustrating the data
+plotAnimals(animalsMem) + ggtitle(label = "Data for Training Classifier")
+
+#data to test classifier
+noAnimals <- c(500, 500, 500)
+rho  <- c(-0.3, 0.4, 0.5)
+sdXY <- list(c(4, 7), c(10, 8), c(10, 7))
+muXY <- list(c(6, 30), c(12, 45), c(8,5))
+
+animalsNew <- animals(rho, sdXY, muXY, noAnimals)
+
+# illustrating the data
+plotAnimals(animalsNew) + ggtitle(label = "New Points for Testing Classifier")
+
+
+````
+
+
+```{r, Train and Use Classifer}
+#Set k and p paremeters
+k <- 11
+p <- 2
+
+#Train the classifier
+trained.output <- kNN_classifier(trainData = animalsMem, trueClasses = animalsMem[,3],
+                                 operation = "train", k = k, p = p)
+
+#Training error
+trained.output$error
+
+#Training Accuracy
+trained.output$accuracy
+
+#Test the classifier 
+prediction <- kNN_classifier(trainData = animalsNew, memory = animalsMem, 
+                             trueClasses = animalsMem[,3],
+                             k = k, p = p, operation = "predict")
+
+#Test error
+prediction$error
+
+#Training Accuracy
+trained.output$accuracy
+
+#Boundaries Roughly
+pred.df <- cbind(animalsNew[,1:2], trueClass = prediction$predictedClass)
+
+ggplot(pred.df, aes(y=weight, x=height, label = trueClass,
+                    colour=trueClass, fill=trueClass)) +
+  geom_point(alpha = 0.5) + stat_density2d() +
+  scale_colour_brewer(palette="Set1")
+
+```
+
+## Compare performance with different k
+```{r, Compare Error}
+#performance of the classifier with different values of k
+k_seq <- seq.int(from = 1, to = 21, by = 2)
+k_seq <- c(k_seq, 31, 41, 71, 101, 131, 161)
+
+train_error <- sapply(k_seq, function(x) (1 - 
+                        kNN_classifier(trainData = animalsMem, 
+                                       trueClasses = animalsMem[,3],
+                                       operation = "train", k = x, p = p)$accuracy))
+
+predict_error <- sapply(k_seq, function(x) (1 - 
+                                              kNN_classifier(trainData = animalsNew, 
+                                                             memory = animalsMem,
+                                                             trueClasses = animalsMem[,3],
+                                                             operation = "predict", 
+                                                             k = x, p = p)$accuracy))
+#Create melted dataframe
+error.DF <- data.frame(k = k_seq, train = train_error,
+                       predict = predict_error) %>% 
+  melt(id = "k", variable.name = "Sample", value.name = "Error")
+
+
+
+#Plot error rates
+ggplot(data = error.DF, aes(x = k, y = Error, color = Sample, fill = Sample, 
+                            label = as.numeric(round(Error * 100), 1))) +
+  geom_line() +
+  geom_point() +
+  geom_text(size = 4, hjust = 0, vjust = 0, color = "black") +
+  xlab("k -Number of nearest neighbors") +
+  ylab("Misclassification error") +
+  theme_bw(base_size = 14) +
+  scale_colour_brewer(palette="Set1")
+
+```
+
+##Selecting the best k 
+```{r, select the best k}
+#select k with minimum error rate amongst training data.
+k_min <- error.DF$k[which.min(error.DF$Error[error.DF$Sample == "train"])]
+k_min
+
+prediction <- kNN_classifier(trainData = animalsNew, memory = animalsMem, 
+                             trueClasses = animalsMem[,3],
+                             k = k_min, p = p, operation = "predict")
+
+error_rate <- 1 - prediction$accuracy 
+round(error_rate *100, 2)
+
+prediction$error
+
+#Boundaries Roughly
+pred.df <- cbind(animalsNew[,1:2], trueClass = prediction$predictedClass)
+p <- ggplot(pred.df, aes(y=weight, x=height, label = trueClass, colour=trueClass, fill=trueClass))
+p + geom_point(alpha = 0.5) + stat_density2d() +
+  scale_colour_brewer(palette="Set1") +
+  ggtitle("Boundary Line")
+
+
+```
+

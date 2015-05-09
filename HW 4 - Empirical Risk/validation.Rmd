@@ -1,0 +1,263 @@
+---
+title: "kNN Validation"
+author: "Rishabh Agnihotri"
+date: "20 February 2015"
+output: html_document
+---
+```{r, knitr_options , include=FALSE}
+    if (!require("knitr")) install.packages("knitr")
+    
+    # some useful global defaults
+    opts_chunk$set(fig.width=8, fig.height=5, warning=FALSE, message=FALSE, include=TRUE, echo=TRUE, cache=TRUE, cache.comments=FALSE)
+
+```
+
+
+```{r, Setup_and_Loading_Data, include=FALSE}
+
+    # setting up some key things for our report
+    # filename <- "ML_seminar1"
+    outputAsHTML <- TRUE  
+
+    if (outputAsHTML) {
+        opts_chunk$set(dev = 'svg')
+        options(xtable.type = 'html')
+        options(xtable.include.rownames = FALSE)
+        options(xtable.comment = FALSE)
+    } else if (!outputAsHTML) {
+        opts_chunk$set(dev = 'pdf')
+        options(xtable.type = 'latex')
+        options(xtable.include.rownames = FALSE)
+        options(xtable.comment = FALSE)
+    }
+    
+    # loading in required packages
+    if (!require("foreach")) install.packages("foreach")
+    if (!require("doSNOW")) install.packages("doSNOW")
+    if (!require("class")) install.packages("class")
+    if (!require("dplyr")) install.packages("dplyr")
+    if (!require("ggplot2")) install.packages("ggplot2")
+    
+    #source helper
+    source("helper.R")
+
+    # loading the data
+    digits <- read.csv("training.csv", stringsAsFactors=FALSE, header = F)
+    test.digits <- read.csv("test.csv", stringsAsFactors=FALSE, header = F)
+```
+
+#1
+##k fold validation
+
+```{r}
+#Define Buckets and arrange data according to budget
+noBuckets <- 10
+digits.buckets <- createKFolds(digits, noBuckets)
+
+k.range <- seq(from = 1, to = 11, by =  2)
+
+# to go over both iterators simultaneously, they need to be of equal length
+bucketList <- rep(1:noBuckets, each = length(k.range))
+kList <- rep(k.range, noBuckets)
+
+
+#parallel execution
+cores <- 4
+
+cl <- makeCluster(cores, type="SOCK", outfile="") 
+
+registerDoSNOW(cl)
+
+time.elapsed <- system.time(results<- foreach(bucket = bucketList, k = kList, 
+                  .combine=rbind, .packages=c("class", "dplyr")) %dopar% {
+                    
+                    knn.validation(data = digits.buckets, bucketNo = bucket, k = k)
+                    })        
+
+stopCluster(cl)
+
+#Summarize the results
+results.sum <- as.data.frame(results) %>% group_by(k) %>% summarise(test.error = mean(test.error))
+
+#Select the best k
+best.k <- results.sum[which.min(as.matrix(results.sum[,2])),1]
+
+#Plot the errors
+plot1 <- ggplot(results.sum, aes(x = k, y = test.error)) + 
+  geom_point() +
+  geom_line() +
+  labs(x = "k", y = "Error Rate", title = "k fold validation")
+
+plot1
+
+dev.copy(pdf, 'plot1.pdf')
+dev.off()
+
+#Display the best k and the time elapsed
+paste("The Optimal k is", best.k, "with an error rate of", min(as.matrix(results.sum[,2])))
+paste("Time elapsed during parallel execution", round(time.elapsed[[3]], 3), "seconds")
+
+
+#predict using the best k
+
+predict <- knn(train = digits[, -1], test = test.digits,
+               cl = as.numeric(digits[, 1]), k = best.k)
+
+write.csv(x = predict, file = "kfoldprediction.csv")
+```
+
+#2
+##leave one out
+
+```{r}
+#Define Buckets and arrange data according to budget
+noBuckets <- nrow(digits)
+digits.buckets <- createKFolds(digits, noBuckets)
+
+k.range <- seq(from = 1, to = 11, by =  2)
+
+# to go over both iterators simultaneously, they need to be of equal length
+bucketList <- rep(1:noBuckets, each = length(k.range))
+kList <- rep(k.range, noBuckets)
+
+
+#parallel execution
+cl <- makeCluster(cores, type="SOCK", outfile="") 
+
+registerDoSNOW(cl)
+
+time.elapsed <- system.time(results<- foreach(bucket = bucketList, k = kList, 
+                              .combine=rbind, .packages=c("class", "dplyr")) %dopar% {
+                                
+                                knn.validation(digits.buckets, bucketNo = bucket, k = k)
+                              })        
+
+stopCluster(cl)
+
+#Summarize the results
+results.sum <- as.data.frame(results) %>% group_by(k) %>% summarise(test.error = mean(test.error))
+
+#Select the best k
+best.k <- results.sum[which.min(as.matrix(results.sum[,2])),1]
+
+#Plot the errors
+plot2 <- ggplot(results.sum, aes(x = k, y = test.error)) + 
+  geom_point() +
+  geom_line() +
+  labs(x = "k", y = "Error Rate", title = "leave one out validation")
+
+plot2
+
+dev.copy(pdf, 'plot2.pdf')
+dev.off()
+
+#Display the best k and the time elapsed
+paste("The Optimal k is", best.k, "with an error rate of", min(as.matrix(results.sum[,2])))
+paste("Time elapsed during parallel execution", round(time.elapsed[[3]], 3), "seconds")
+
+#predict using the best k
+
+predict <- knn(train = digits[, -1], test = test.digits,
+               cl = as.numeric(digits[, 1]), k = best.k)
+
+write.csv(x = predict, file = "leaveoutprediction.csv")
+
+```
+
+
+#3
+##resubstitution
+```{r}
+k.range <- seq(from = 1, to = 11, by =  2)
+#parallel execution
+cl <- makeCluster(cores, type="SOCK", outfile="") 
+
+registerDoSNOW(cl)
+
+time.elapsed <- system.time(results<- foreach(k = k.range, .combine=rbind, 
+                              .packages=c("class")) %dopar% {
+                                
+                                resubstitution(digits, k)
+                              })        
+
+stopCluster(cl)
+
+#Summarize the results
+results.sum <- as.data.frame(results) %>% group_by(k) %>% summarise(test.error = mean(test.error))
+
+#Select the best k
+best.k <- results.sum[which.min(as.matrix(results.sum[,2])),1]
+
+#Plot the errors
+plot3 <- ggplot(results.sum, aes(x = k, y = test.error)) + 
+  geom_point() +
+  geom_line() +
+  labs(x = "k", y = "Error Rate", title = "resubstitution validation")
+
+plot3
+
+dev.copy(pdf, 'plot3.pdf')
+dev.off()
+
+#Display the best k and the time elapsed
+paste("The Optimal k is", best.k, "with an error rate of", min(as.matrix(results.sum[,2])))
+paste("Time elapsed during parallel execution", round(time.elapsed[[3]], 3), "seconds")
+
+#predict using the best k
+
+predict <- knn(train = digits[, -1], test = test.digits,
+               cl = as.numeric(digits[, 1]), k = best.k)
+
+write.csv(x = predict, file = "resubsprediction.csv")
+
+```
+
+#4
+##Monte Carlo Simulations
+
+```{r}
+noSims <- nrow(digits) / 50
+k.range <- seq(from = 1, to = 11, by =  2)
+kList <- rep(k.range, each = noSims)
+#parallel execution
+cl <- makeCluster(cores, type="SOCK", outfile="") 
+
+registerDoSNOW(cl)
+
+time.elapsed <- system.time(results<- foreach(k = kList, .combine=rbind, 
+                              .packages=c("class", "dplyr")) %dopar% {
+                                monte.carlo(digits, k)
+                              })        
+
+stopCluster(cl)
+
+#Summarize the results
+results.sum <- as.data.frame(results) %>% group_by(k) %>% summarise(test.error = mean(test.error))
+
+#Select the best k
+best.k <- results.sum[which.min(as.matrix(results.sum[,2])),1]
+
+#Plot the errors
+plot4 <- ggplot(results.sum, aes(x = k, y = test.error)) + 
+  geom_point() +
+  geom_line() +
+  labs(x = "k", y = "Error Rate", title = "resubstitution validation")
+
+plot4
+
+dev.copy(pdf, 'plot4.pdf')
+dev.off()
+
+#Display the best k and the time elapsed
+paste("The Optimal k is", best.k, "with an error rate of", min(as.matrix(results.sum[,2])))
+paste("Time elapsed during parallel execution", round(time.elapsed[[3]], 3), "seconds")
+
+#predict using the best k
+
+predict <- knn(train = digits[, -1], test = test.digits,
+               cl = as.numeric(digits[, 1]), k = best.k)
+
+write.csv(x = predict, file = "monteprediction.csv")
+
+```
+
